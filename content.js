@@ -1,6 +1,6 @@
 /**
- * MSE 微课助手 v1.0.0
- * 适配课程：《农林院校专业学位研究生英语》(courseId=1926)
+ * MSE 微课助手 v1.2.0
+ * 适配课程：courseId=1926《农林院校专业学位研究生英语》、courseId=1615
  *
  * 功能
  *   1. 补满学习时长  —— 直接把每个小节/单元的累计时长推到要求值
@@ -17,17 +17,32 @@
   'use strict';
 
   if (window.__MSE_HELPER__) return;
-  window.__MSE_HELPER__ = { version: '1.0.0', loadedAt: Date.now() };
+  window.__MSE_HELPER__ = { version: '1.2.0', loadedAt: Date.now() };
 
   // ============================ 配置 ============================
   const CFG = {
-    version: '1.0.0',
-    supportedCourseId: '1926',
-    supportedCourseName: '农林院校专业学位研究生英语',
+    version: '1.2.0',
+    // 支持多门课程：白名单内的 courseId 均放行
+    supportedCourseIds: ['1615', '1926'],
+    courseNames: { '1926': '农林院校专业学位研究生英语', '1615': '课程 1615' },
     // 适配时平台 JS 的版本特征串，平台改版后这里会失配，触发警告
     expectBaseTokens: ['study-duration-v1-20261008', 'course-progress-v1-20261026'],
     expectSubjectTokens: ['answer-review-v1-20260902'],
     logLimit: 400,
+    // 更新检测：多源并发降级，任一可达即可。顺序按实测可达性排列。
+    update: {
+      sources: [
+        'https://fastly.jsdelivr.net/gh/NIUzGG-FMei/MSE-autoFinish-your-Homework@main/version.json',
+        'https://testingcf.jsdelivr.net/gh/NIUzGG-FMei/MSE-autoFinish-your-Homework@main/version.json',
+        'https://gcore.jsdelivr.net/gh/NIUzGG-FMei/MSE-autoFinish-your-Homework@main/version.json',
+        'https://raw.githubusercontent.com/NIUzGG-FMei/MSE-autoFinish-your-Homework/main/version.json',
+      ],
+      repo: 'https://github.com/NIUzGG-FMei/MSE-autoFinish-your-Homework',
+      cacheKey: 'mse_upd_v120',
+      cacheMs: 30 * 60 * 1000,
+      timeoutMs: 6000,
+      delayMs: 3000,
+    },
   };
 
   // ============================ 工具 ============================
@@ -107,10 +122,12 @@
       });
     }
 
-    // 课程匹配
-    if (env.courseId !== CFG.supportedCourseId) {
+    // 课程匹配（白名单）
+    out.info.courseId = env.courseId;
+    out.info.courseName = env.courseName;
+    if (!CFG.supportedCourseIds.includes(env.courseId)) {
       out.ok = false;
-      out.issues.push(`当前课程 courseId=${env.courseId}，本插件只适配 ${CFG.supportedCourseId}（${CFG.supportedCourseName}）`);
+      out.issues.push(`当前课程 courseId=${env.courseId}，本插件仅适配 ${CFG.supportedCourseIds.join(' / ')}`);
       out.info.courseMismatch = true;
     }
 
@@ -513,6 +530,12 @@
   .log .warn { color: #f0b849; }
   .log .err { color: #ff7b72; }
   .log .dim { color: #7d8590; }
+  .update {
+    display: none; margin-bottom: 8px; padding: 8px 10px; border-radius: 8px;
+    background: #e8f0fe; border: 1px solid #a8c7fa; color: #1a4d8f;
+    font-size: 12.5px; line-height: 1.45; cursor: pointer; word-break: break-all;
+  }
+  .update:hover { background: #d7e5fd; }
   .foot { margin-top: 7px; font-size: 11px; color: #8a94a0; display: flex; justify-content: space-between; }
   `;
 
@@ -527,6 +550,7 @@
     </div>
     <div class="bd">
       <div class="banner" id="banner"></div>
+      <div class="update" id="updateBar"></div>
       <div class="status" id="status"><span class="dot"></span><span id="statusText">正在检测环境…</span></div>
       <div class="grid">
         <button class="act primary" data-act="study">补满学习时长</button>
@@ -542,7 +566,7 @@
         <button class="act" data-act="clear">清空日志</button>
       </div>
       <div class="log" id="log"></div>
-      <div class="foot"><span id="footLeft">就绪</span><span>仅适配本课程</span></div>
+      <div class="foot"><span id="footLeft">就绪</span><span id="footRight" title="支持的课程 ID：${CFG.supportedCourseIds.join(' / ')}">课程 —</span></div>
     </div>
   </div>
   `;
@@ -615,10 +639,12 @@
     root = shadow;
     el = {
       banner: shadow.getElementById('banner'),
+      updateBar: shadow.getElementById('updateBar'),
       status: shadow.getElementById('status'),
       statusText: shadow.getElementById('statusText'),
       log: shadow.getElementById('log'),
       footLeft: shadow.getElementById('footLeft'),
+      footRight: shadow.getElementById('footRight'),
     };
 
     shadow.addEventListener('click', (e) => {
@@ -670,6 +696,81 @@
     }
   }
 
+  // ============================ 更新检测 ============================
+  function cmpVer(a, b) {
+    const pa = String(a).split('.').map((n) => parseInt(n, 10) || 0);
+    const pb = String(b).split('.').map((n) => parseInt(n, 10) || 0);
+    const len = Math.max(pa.length, pb.length);
+    for (let i = 0; i < len; i++) {
+      const x = pa[i] || 0;
+      const y = pb[i] || 0;
+      if (x !== y) return x > y ? 1 : -1;
+    }
+    return 0;
+  }
+
+  async function fetchVersion() {
+    // 30 分钟内不重复请求
+    try {
+      const raw = sessionStorage.getItem(CFG.update.cacheKey);
+      if (raw) {
+        const c = JSON.parse(raw);
+        if (c && c.t && Date.now() - c.t < CFG.update.cacheMs) return c.d;
+      }
+    } catch (e) { /* 缓存不可用时忽略 */ }
+
+    for (const url of CFG.update.sources) {
+      try {
+        const ctl = new AbortController();
+        const timer = setTimeout(() => ctl.abort(), CFG.update.timeoutMs);
+        const r = await fetch(url + '?t=' + Date.now(), { cache: 'no-store', signal: ctl.signal });
+        clearTimeout(timer);
+        if (!r.ok) continue;
+        const d = await r.json();
+        if (!d || !d.version) continue;
+        try { sessionStorage.setItem(CFG.update.cacheKey, JSON.stringify({ t: Date.now(), d })); } catch (e) { /* 忽略 */ }
+        return d;
+      } catch (e) { /* 该源不可达，换下一个 */ }
+    }
+    return null;
+  }
+
+  function bindUpdateBar(info) {
+    const bar = el.updateBar;
+    if (!bar) return;
+    const notes = String(info.notes || '').trim();
+    bar.textContent = '发现新版本 v' + info.version + (notes ? '｜' + notes : '') + '　点此更新';
+    bar.title = '点击查看更新方法';
+    bar.style.display = 'block';
+    bar.onclick = () => {
+      const target = info.zip || info.page || CFG.update.repo;
+      log('发现新版本 v' + info.version + '（当前 v' + CFG.version + '）', 'warn');
+      if (notes) log('更新内容：' + notes, 'dim');
+      log('更新步骤：1) 下载并解压 → 2) 覆盖插件原目录 → 3) chrome://extensions 点「重新加载」 → 4) 刷新本页', 'dim');
+      try {
+        const a = document.createElement('a');
+        a.href = target;
+        a.target = '_blank';
+        a.rel = 'noopener';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        log('已打开下载地址：' + target, 'dim');
+      } catch (e) {
+        log('自动打开失败，请手动访问：' + target, 'err');
+      }
+    };
+  }
+
+  async function checkUpdate() {
+    const info = await fetchVersion();
+    if (!info) return; // 静默：所有源不可达或数据异常
+    if (cmpVer(info.version, CFG.version) > 0) {
+      bindUpdateBar(info);
+      log('检测到新版本 v' + info.version + '（当前 v' + CFG.version + '），面板顶部可点击更新', 'warn');
+    }
+  }
+
   // ============================ 启动 ============================
   async function boot() {
     mount();
@@ -688,7 +789,13 @@
       return;
     }
 
-    log(`账号 ${env.userName || env.userId}｜课程 ${env.courseName || env.courseId}｜班级 ${env.classId}`, 'dim');
+    const supported = CFG.supportedCourseIds.includes(env.courseId);
+    if (el.footRight) {
+      el.footRight.textContent = `课程 ${env.courseId} ${supported ? '✓' : '✗'}`;
+      el.footRight.style.color = supported ? '' : '#cf222e';
+    }
+    log(`账号 ${env.userName || env.userId}｜课程 ${env.courseName || '(未命名)'}（ID ${env.courseId}）｜班级 ${env.classId}`, 'dim');
+    log('支持课程 ID：' + CFG.supportedCourseIds.join(' / '), 'dim');
 
     setStatus('正在检测平台版本…', 'warn');
     const p = await probe(env);
@@ -708,6 +815,9 @@
         if (b) { b.disabled = true; b.title = '平台版本不匹配，已禁用'; }
       });
     }
+
+    // 更新检测：延迟执行，任何失败静默，不影响主流程
+    setTimeout(() => { checkUpdate().catch(() => {}); }, CFG.update.delayMs);
   }
 
   boot();

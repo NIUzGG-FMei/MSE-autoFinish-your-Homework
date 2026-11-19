@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "MSE-加速英语老师的消化系统！",
-  "version": "1.0.0",
-  "description": "MSE 微课平台辅助工具：一键补满学习时长、自动完成必做练习。仅适配《农林院校专业学位研究生英语》。",
+  "version": "1.2.0",
+  "description": "MSE 微课平台辅助工具：一键补满学习时长、自动完成必做练习。支持 courseId 1615 / 1926，内置版本更新检测。",
   "minimum_chrome_version": "111",
   "content_scripts": [
     {
